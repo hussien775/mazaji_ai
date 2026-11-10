@@ -1,0 +1,19 @@
+# Web Framework & Validation
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+
+# Database & Async Drivers
+sqlalchemy>=2.0.38
+greenlet>=3.1.0
+aiomysql>=0.2.0
+cryptography>=44.0.0
+python-dotenv>=1.0.1
+
+# AI & Vector Search
+qdrant-client>=1.12.0
+fastembed>=0.4.0
+httpx>=0.28.0
+openai>=1.59.0
+google-genai>=0.1.0

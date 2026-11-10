@@ -1,0 +1,1 @@
+"""Mazaji AI Application Package."""
