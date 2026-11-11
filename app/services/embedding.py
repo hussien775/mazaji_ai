@@ -52,7 +52,7 @@ class EmbeddingService:
 
     def get_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        توليد متجهات دلالية لمجموعة نصوص دفعة واحدة لتسريع الفهرسة الأولية.
+        توليد متجهات دلالية لمجموعة نصوص دفعة واحدة لتسريع الفهرسة الأولية.ali taha
         """
         client = next(iter(key_rotator._clients.values()))
         try:
