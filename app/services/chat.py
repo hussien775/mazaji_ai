@@ -1,6 +1,7 @@
 import re
 import uuid
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from google import genai
 from google.genai import types
@@ -211,14 +212,117 @@ class ChatService:
             f"رد المستشار مزاجي المباشر:"
         )
 
-        return actual_session_id, suggested_hotels, system_instruction, messages_prompt, safe_message, has_history
+        return (
+            actual_session_id,
+            suggested_hotels,
+            system_instruction,
+            messages_prompt,
+            safe_message,
+            has_history,
+            parsed,
+            is_off_topic,
+            is_courtesy
+        )
+
+    def _build_fallback_reply(
+        self,
+        message: str,
+        suggested_hotels: List[PropertyDataModel],
+        parsed: Dict[str, Any],
+        has_history: bool,
+        is_off_topic: bool,
+        is_courtesy: bool
+    ) -> str:
+        """
+        توليد رد استجابة احتياطي ذكي واحترافي 100% دون إشعار العميل بأي خطأ أو توقف للنموذج.
+        في حال نفاد حصة Gemini اليومية أو بالدقيقة، يتم بناء الرد فوراً من نتائج البحث المسترجعة
+        مع إبراز الفنادق والأسعار والوحدات المطابقة، وحفظ هذا الرد في سجل الجلسة ليواصل
+        النموذج المحادثة بانسيابية تامة فور عودته للعمل.
+        """
+        # 1. إذا كان السؤال خارج نطاق مزاجي (رياضة، أبراج، أسئلة عامة)
+        if is_off_topic:
+            return (
+                "هذه الأسئلة خارج اختصاصي يا غالي 😅؛ فتخصصي وخبرتي كلها مسخرة لشيء واحد: "
+                "إعطاؤك أفضل مكان تحسّن فيه مزاجك وترتاح فيه باليمن! "
+                "آمرني، في أي مدينة تشتي أقترح لك فندق أو مكان إقامة يروّق مزاجك؟"
+            )
+
+        # 2. إذا كانت رسالة مجاملة أو تحية عامة
+        if is_courtesy and not suggested_hotels:
+            if "سلام" in message or "السلام" in message:
+                return "وعليكم السلام ورحمة الله وبركاته! يا أهلاً بك في مزاجي، كيف أقدر أساعدك اليوم في اختيار وحجز مكان إقامتك باليمن؟"
+            if "شكرا" in message or "تسلم" in message or "مشكور" in message:
+                return "العفو يا غالي، في الخدمة دائماً! إذا عندك أي استفسار آخر عن الفنادق أو الأسعار من عيوني."
+            return "يا أهلاً ومرحباً بك في مزاجي! آمرني، في أي مدينة أو منطقة تبحث عن فندق اليوم؟"
+
+        # 3. إذا تم استرجاع فنادق مطابقة لطلب النزيل
+        if suggested_hotels:
+            parts = []
+            if not has_history:
+                parts.append("يا أهلاً وسهلاً بك في «مزاجي»!")
+
+            criteria = []
+            if parsed.get("detected_city"):
+                criteria.append(f"في محافظة {parsed['detected_city']}")
+            if parsed.get("detected_unit_type"):
+                criteria.append(f"من نوع {parsed['detected_unit_type']}")
+            if parsed.get("detected_guests"):
+                criteria.append(f"لسعة {parsed['detected_guests']} أشخاص/أسرة")
+            if parsed.get("detected_max_price"):
+                criteria.append(f"بحدود {parsed['detected_max_price']:,.0f} ريال")
+
+            if criteria:
+                crit_text = " (" + "، ".join(criteria) + ")"
+                parts.append(f"بناءً على طلبك{crit_text}، هذه أفضل خيارات الإقامة المطابقة والمتاحة حالياً:\n")
+            else:
+                parts.append("بناءً على طلبك، وجدنا لك أفضل الفنادق المطابقة والمتاحة حالياً:\n")
+
+            for idx, hotel in enumerate(suggested_hotels[:3], start=1):
+                loc = f"({hotel.city} - {hotel.district})" if hotel.district else f"({hotel.city})"
+                hotel_text = f"### {idx}. **{hotel.name}** {loc}\n"
+                hotel_text += f"* **نوع العقار:** {hotel.type}"
+                if hotel.rating > 0:
+                    hotel_text += f" | **التقييم:** ⭐ {hotel.rating:.1f}/5"
+                hotel_text += "\n"
+
+                if hotel.matching_units:
+                    hotel_text += "* **الوحدات المتاحة المطابقة:**\n"
+                    for unit in hotel.matching_units[:3]:
+                        beds_info = []
+                        if unit.single_beds > 0:
+                            beds_info.append(f"{unit.single_beds} سرير فردي")
+                        if unit.double_beds > 0:
+                            beds_info.append(f"{unit.double_beds} سرير مزدوج")
+                        beds_str = f" ({', '.join(beds_info)})" if beds_info else ""
+                        hotel_text += (
+                            f"  - **{unit.unit_name}**: السعر {unit.price_per_night:,.0f} ريال/ليلة "
+                            f"(سعة {unit.max_guests} أشخاص{beds_str})\n"
+                        )
+                parts.append(hotel_text)
+
+            parts.append(
+                "💡 **للحجز والتأكيد:** يمكنك الاطلاع على كروت الفنادق المرفقة بالأسفل "
+                "والنقر على الخيار المناسب لتأكيد واستكمال حجزك مباشرة عبر التطبيق."
+            )
+            return "\n".join(parts)
+
+        # 4. إذا لم يتم العثور على فنادق مطابقة للطلب الحالي
+        if has_history:
+            return (
+                "لم نجد حالياً فنادق مطابقة تماماً لهذه المواصفات المحددة في النظام، "
+                "لكن يمكنك تجربة تغيير الميزانية أو المنطقة، وسأكون بخدمتك فوراً في استعراض الخيارات البديلة!"
+            )
+        return (
+            "يا أهلاً بك في مزاجي! لم نجد خيارات مطابقة تماماً لهذا الطلب في الوقت الحالي، "
+            "لكن يسعدنا دائماً استعراض جميع الفنادق المتاحة في التطبيق أو تحديد محافظة وميزانية أخرى لتجهيز أفضل الخيارات لك."
+        )
 
     async def reply_to_user(self, session_id: Optional[str], message: str) -> Dict[str, Any]:
         """
         معالجة رسالة العميل وإرجاع الرد كائناً مكتملاً دفعة واحدة (JSON)
-        مع عزل تعليمات النظام أمنياً وتسريع الاستجابة.
+        مع عزل تعليمات النظام أمنياً وتسريع الاستجابة والتحويل الذكي التلقائي عند نفاد الحصة.
         """
-        actual_session_id, suggested_hotels, system_instruction, messages_prompt, safe_message, has_history = (
+        actual_session_id, suggested_hotels, system_instruction, messages_prompt, safe_message, has_history, parsed, is_off_topic, is_courtesy = (
             await self._prepare_chat_context(session_id=session_id, message=message)
         )
 
@@ -236,22 +340,27 @@ class ChatService:
                 )
 
             response = await key_rotator.execute_with_failover("توليد رد الشات", _generate)
-            default_empty = "يسعدني مساعدتك في أي استفسار عن فنادق مزاجي." if has_history else "يا أهلاً بك في مزاجي!"
-            reply_text = response.text.strip() if response.text else default_empty
-        except Exception as e:
-            logger.error(f"Error generating chat reply from Gemini: {str(e)}")
-            if has_history:
-                reply_text = (
-                    "يبدو أن هناك ضغطاً مؤقتاً في الخدمة، "
-                    "ولكن يسعدني استكمال إجابتك حول أماكن الإقامة في اليمن. "
-                    "يرجى إعادة إرسال سؤالك بعد لحظات."
-                )
+            if response.text and response.text.strip():
+                reply_text = response.text.strip()
             else:
-                reply_text = (
-                    "يا أهلاً وسهلاً بك في مزاجي! يبدو أن هناك ضغطاً مؤقتاً في الخدمة، "
-                    "ولكن يسعدني دائماً مساعدتك في استعراض أفضل أماكن الإقامة في اليمن. "
-                    "يرجى إعادة إرسال سؤالك بعد لحظات."
+                reply_text = self._build_fallback_reply(
+                    message=safe_message,
+                    suggested_hotels=suggested_hotels,
+                    parsed=parsed,
+                    has_history=has_history,
+                    is_off_topic=is_off_topic,
+                    is_courtesy=is_courtesy
                 )
+        except Exception as e:
+            logger.warning(f"تفعيل الاستجابة الذكية المباشرة (RAG Fallback) بسبب تعذر Gemini: {e}")
+            reply_text = self._build_fallback_reply(
+                message=safe_message,
+                suggested_hotels=suggested_hotels,
+                parsed=parsed,
+                has_history=has_history,
+                is_off_topic=is_off_topic,
+                is_courtesy=is_courtesy
+            )
 
         # حفظ الجولة في مدير الجلسات المركزي الموزع مع تجديد الصلاحية
         await session_manager.save_turn(
@@ -275,9 +384,9 @@ class ChatService:
         البث المتدفق اللحظي للرد (SSE Streaming):
         1. يرسل كروت الفنادق المقترحة فور استرجاعها مباشرة للمستخدم.
         2. يبث الكلمات والعبارات حرفاً بحرف في أجزاء من الثانية مع عزل أمني صارم.
-        3. يحفظ المحادثة المكتملة في مدير الجلسات المركزي عند النهاية.
+        3. يحفظ المحادثة المكتملة في مدير الجلسات المركزي عند النهاية حتى في وضع الطوارئ.
         """
-        actual_session_id, suggested_hotels, system_instruction, messages_prompt, safe_message, has_history = (
+        actual_session_id, suggested_hotels, system_instruction, messages_prompt, safe_message, has_history, parsed, is_off_topic, is_courtesy = (
             await self._prepare_chat_context(session_id=session_id, message=message)
         )
 
@@ -324,13 +433,23 @@ class ChatService:
                             "data": chunk.text
                         }
         except Exception as e:
-            logger.error(f"خطأ أثناء تدفق الرد من Gemini: {e}")
-            fallback = "يسعدني خدمتك دائماً في مزاجي." if has_history else "يا أهلاً بك! نسعد بخدمتك في مزاجي."
-            full_reply_parts.append(fallback)
-            yield {
-                "event": "token",
-                "data": fallback
-            }
+            logger.warning(f"تفعيل البث الاحتياطي الذكي المباشر (RAG Stream Fallback) بسبب تعذر Gemini: {e}")
+            fallback_text = self._build_fallback_reply(
+                message=safe_message,
+                suggested_hotels=suggested_hotels,
+                parsed=parsed,
+                has_history=has_history,
+                is_off_topic=is_off_topic,
+                is_courtesy=is_courtesy
+            )
+            full_reply_parts.append(fallback_text)
+            # بث النص الاحتياطي بسلاسة سريعة
+            for line in fallback_text.splitlines(keepends=True):
+                yield {
+                    "event": "token",
+                    "data": line
+                }
+                await asyncio.sleep(0.01)
 
         full_reply_text = "".join(full_reply_parts).strip()
 
