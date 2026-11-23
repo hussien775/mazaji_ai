@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_API_KEYS: List[str] = []
 
+    # Langfuse Observability Settings
+    LANGFUSE_SECRET_KEY: Optional[str] = None
+    LANGFUSE_PUBLIC_KEY: Optional[str] = None
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_BASE_URL: Optional[str] = None
+
     @property
     def all_gemini_keys(self) -> List[str]:
         """

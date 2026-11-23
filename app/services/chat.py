@@ -14,6 +14,7 @@ from app.services.vector_db import vector_db_service
 from app.services.query_parser import query_parser
 from app.services.session_manager import session_manager
 from app.services.property_service import property_service
+from app.services.telemetry import telemetry_service
 from app.core.security import sanitize_prompt_input
 from app.core.key_rotator import key_rotator
 
@@ -109,10 +110,10 @@ class ChatService:
                 # توليد المتجه الدلالي غير المتزامن
                 query_vector = await embedding_service.get_embedding_async(safe_message)
 
-                # استرجاع أفضل 3 فنادق مطابقة بالمعنى والوحدات
+                # استرجاع أفضل 10 فنادق مطابقة بالمعنى والوحدات مرتبة حسب الأولوية
                 raw_hotels = await vector_db_service.search_async(
                     query_vector=query_vector,
-                    limit=3,
+                    limit=10,
                     city_name=parsed.get("detected_city"),
                     unit_type=parsed.get("detected_unit_type"),
                     max_price=parsed.get("detected_max_price"),
@@ -171,7 +172,7 @@ class ChatService:
             "  «هذه الأسئلة خارج اختصاصي يا غالي 😅؛ فتخصصي وخبرتي كلها مسخرة لشيء واحد: إعطاؤك أفضل مكان تحسّن فيه مزاجك وترتاح فيه باليمن! آمرني، في أي مدينة تشتي أقترح لك فندق يروّق مزاجك؟»\n"
             "- حافظ دائماً على جوهر الفكرة (لا أستطيع الإجابة عن هذه الأسئلة فتخصصي في إعطائك أفضل مكان تحسن فيه مزاجك) واعرض خدمات مزاجي بلباقة وخفة دم محترمة.\n"
             "مهمتك وصلاحياتك الصارمة:\n"
-            "1. مساعدة النزيل حصراً في استعراض واختيار أفضل أماكن الإقامة في اليمن وفق ميزانيته، عائلته، ورغباته.\n"
+            "1. مساعدة النزيل حصراً في استعراض واختيار أفضل أماكن الإقامة في اليمن وفق ميزانيته، عائلته، ورغباته، وتقديم الفنادق المقترحة بالترتيب حسب أولويتها ومطابقتها لطلبه (وحتى 10 فنادق إذا كانت متوفرة في الحقائق المرفقة).\n"
             "2. شرح الفروقات بين الفنادق والغرف، وتوضيح الأسعار والخدمات بوضوح وأمانة بناءً على الحقائق المسترجعة فقط.\n"
             "3. الالتزام الصارم بالحقائق المرفقة: لا تؤلف أي فنادق أو أسعار وهمية غير موجودة في الحقائق المسترجعة.\n"
             "4. في نهاية ردك إذا اقترحت فنادق، أخبر العميل بلباقة أنه يمكنه الاطلاع على كروت الفنادق المرفقة بالأسفل للنقر عليها واستكمال الحجز بسهولة عبر التطبيق.\n"
@@ -277,7 +278,7 @@ class ChatService:
             else:
                 parts.append("بناءً على طلبك، وجدنا لك أفضل الفنادق المطابقة والمتاحة حالياً:\n")
 
-            for idx, hotel in enumerate(suggested_hotels[:3], start=1):
+            for idx, hotel in enumerate(suggested_hotels[:10], start=1):
                 loc = f"({hotel.city} - {hotel.district})" if hotel.district else f"({hotel.city})"
                 hotel_text = f"### {idx}. **{hotel.name}** {loc}\n"
                 hotel_text += f"* **نوع العقار:** {hotel.type}"
@@ -333,7 +334,7 @@ class ChatService:
                     contents=messages_prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
-                        max_output_tokens=700,
+                        max_output_tokens=1500,
                         temperature=0.7,
                         thinking_config=types.ThinkingConfig(thinking_budget=0)
                     )
@@ -367,6 +368,22 @@ class ChatService:
             session_id=actual_session_id,
             user_text=safe_message,
             model_text=reply_text
+        )
+
+        # تسجيل المحادثة في منصة المراقبة والتحليلات (Langfuse)
+        telemetry_service.log_chat_turn(
+            session_id=actual_session_id,
+            user_message=safe_message,
+            bot_reply=reply_text,
+            suggested_hotels_count=len(suggested_hotels),
+            metadata={
+                "city": parsed.get("detected_city"),
+                "unit_type": parsed.get("detected_unit_type"),
+                "guests": parsed.get("detected_guests"),
+                "max_price": parsed.get("detected_max_price"),
+                "is_off_topic": is_off_topic,
+                "has_history": has_history
+            }
         )
 
         return {
@@ -411,7 +428,7 @@ class ChatService:
                         contents=messages_prompt,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
-                            max_output_tokens=700,
+                            max_output_tokens=1500,
                             temperature=0.7,
                             thinking_config=types.ThinkingConfig(thinking_budget=0)
                         )
@@ -458,6 +475,23 @@ class ChatService:
             session_id=actual_session_id,
             user_text=safe_message,
             model_text=full_reply_text
+        )
+
+        # تسجيل المحادثة التدفّقية في منصة المراقبة والتحليلات (Langfuse)
+        telemetry_service.log_chat_turn(
+            session_id=actual_session_id,
+            user_message=safe_message,
+            bot_reply=full_reply_text,
+            suggested_hotels_count=len(suggested_hotels),
+            metadata={
+                "city": parsed.get("detected_city"),
+                "unit_type": parsed.get("detected_unit_type"),
+                "guests": parsed.get("detected_guests"),
+                "max_price": parsed.get("detected_max_price"),
+                "is_off_topic": is_off_topic,
+                "has_history": has_history,
+                "is_stream": True
+            }
         )
 
         # 4. إشعار نهاية البث
