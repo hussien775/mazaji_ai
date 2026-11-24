@@ -90,6 +90,7 @@ class TelemetryService:
     ):
         try:
             def _record():
+                from langfuse import propagate_attributes
                 meta = dict(metadata) if metadata else {}
                 meta.update({
                     "session_id": session_id,
@@ -97,13 +98,20 @@ class TelemetryService:
                     "is_fallback": is_fallback,
                     "service": "mazaji_ai"
                 })
-                with self.client.start_as_current_observation(
-                    name="mazaji_advisor_chat",
-                    input={"user_message": user_message},
-                    output={"reply": bot_reply},
-                    metadata=meta
+                clean_meta = {k: v for k, v in meta.items() if v is not None}
+                with propagate_attributes(
+                    session_id=session_id,
+                    trace_name="mazaji_advisor_chat",
+                    metadata=clean_meta
                 ):
-                    pass
+                    with self.client.start_as_current_observation(
+                        name="mazaji_advisor_chat",
+                        as_type="generation",
+                        input={"user_message": user_message},
+                        output={"reply": bot_reply},
+                        metadata=clean_meta
+                    ):
+                        pass
                 self.client.flush()
 
             await asyncio.to_thread(_record)
