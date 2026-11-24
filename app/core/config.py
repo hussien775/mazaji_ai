@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # AI & Embeddings Settings (Google Gemini)
     EMBEDDING_PROVIDER: str = "gemini"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
-    CHAT_MODEL: str = "gemini-3.5-flash"
+    CHAT_MODEL: str = "gemini-3.5-flash-lite"
     OPENAI_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_API_KEYS: List[str] = []

@@ -464,8 +464,7 @@ class ChatService:
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
                         max_output_tokens=1500,
-                        temperature=0.7,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0)
+                        temperature=0.7
                     )
                 )
 
@@ -561,8 +560,7 @@ class ChatService:
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
                             max_output_tokens=1500,
-                            temperature=0.7,
-                            thinking_config=types.ThinkingConfig(thinking_budget=0)
+                            temperature=0.7
                         )
                     )
                     break
